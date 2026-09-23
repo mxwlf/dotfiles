@@ -1,0 +1,13 @@
+# See https://github.com/rami3l/pacaptr#configuration
+
+# Skip packages that are already installed (makes re-runs a no-op).
+needed = true
+
+# Let pacaptr auto-pick the backend per OS.
+# Uncomment to pin:
+# default_pm = "brew"
+
+# We pass --noconfirm explicitly from the scripts, so don't force it here.
+# no_confirm = false
+# dry_run = false
+# no_cache = false

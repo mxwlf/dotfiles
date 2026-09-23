@@ -1,223 +1,120 @@
-# git-template
+# dotfiles
 
-My baseline git template. It ships a shared git configuration and a set of
-[pre-commit](https://pre-commit.com) hooks so every repo started from this
-template gets consistent commit hygiene and commit-message formatting out of
-the box.
+Cross-OS bootstrap built around [`pacaptr`](https://github.com/rami3l/pacaptr),
+a `pacman`-style wrapper over `brew`, `apt`, `pacman`, `scoop`, and friends.
 
-All tooling lives in a **repo-local virtualenv** (`.venv/`) created by
-`make setup`. Nothing is installed globally, and no specific global Python
-version is required.
+One command turns a blank box into a working dev environment.
 
-## Requirements
+## Supported platforms
 
-- **GNU make**, **git**, and a POSIX shell (on Windows: Git Bash or WSL).
-- **Any Python interpreter `>= 3.10`** reachable as `python3`. It is used *only*
-  to create `.venv/`, so whatever you already have works — system, Homebrew,
-  pyenv, uv, asdf. If your default `python3` is older, point make at another
-  interpreter instead of changing your system default:
+| OS                  | Backend pacaptr uses |
+| ------------------- | -------------------- |
+| macOS               | Homebrew             |
+| Debian / Ubuntu     | apt                  |
+| Arch Linux          | pacman               |
+| WSL (Ubuntu/Debian) | apt                  |
+| Windows (native)    | *not yet* (needs a PowerShell stage 1) |
 
-  ```sh
-  make setup PYTHON=python3.12          # or an absolute path
-  ```
+## Usage
 
-  Check what make will use with `make check-python`.
+### Fresh machine
 
-That is the whole list — `pre-commit` itself is **not** a prerequisite.
-`make setup` installs the pinned version from
-[`requirements-dev.txt`](requirements-dev.txt) into `.venv/`.
-
-> **Why a venv instead of a required global Python version?** Some hooks
-> (commitizen, sync-pre-commit-deps) are `language: python` and need
-> Python `>= 3.10`. Their upstream manifests declare `language_version: python3`,
-> which pre-commit resolves to *the interpreter running pre-commit itself* — not
-> to whatever `python3` is on your `PATH`. So a `pre-commit` installed under an
-> old interpreter (e.g. macOS's bundled Python 3.9) builds those hook
-> environments with 3.9 and fails with `requires a different Python`.
->
-> Rather than papering over that with per-hook `language_version` pins — which
-> forced every contributor to install one exact Python version globally — the
-> template runs pre-commit from `.venv/`, built from any Python `>= 3.10`. The
-> hooks inherit that interpreter, so
-> [`.pre-commit-config.yaml`](.pre-commit-config.yaml) needs no interpreter pins
-> at all and your machine's Python setup is left alone.
-
-## Setup
-
-From the repository root:
-
-```sh
-make setup
+```bash
+curl -fsSL https://raw.githubusercontent.com/mxwlf/dotfiles/main/bootstrap.sh | bash
 ```
 
-This does three things:
+That does, in order:
 
-1. Creates `.venv/` and installs the pinned tooling
-   ([`requirements-dev.txt`](requirements-dev.txt)) into it.
-2. Runs `git config --local include.path ../.gitconfig`, which makes the repo's
-   local config include the committed [`.gitconfig`](.gitconfig). That config
-   sets `core.hooksPath = .githooks/`, activating the committed hook scripts.
-   Because the hooks live in `.githooks/` and are wired up through
-   `include.path`, **`pre-commit install` is not required**.
-3. Runs `pre-commit install-hooks` to pre-build the hook environments, so your
-   first commit isn't slowed down by it.
+1. Detects the OS.
+2. Installs a C toolchain (xcode CLT / build-essential / base-devel).
+3. Installs `rustup` + stable Rust.
+4. Installs `cargo-binstall`, then `pacaptr` (falls back to `cargo install pacaptr` from source).
+5. Installs `git` via `pacaptr`.
+6. Clones this repo to `~/.dotfiles`.
+7. Hands off to `~/.dotfiles/install.sh`.
 
-You never need to *activate* `.venv`: the hook scripts in `.githooks/` and every
-make target invoke `.venv/bin/pre-commit` by absolute path.
+### Already bootstrapped
 
-Run `make help` (or just `make`) to list the available targets.
-
-## What gets configured
-
-| File | Purpose |
-| --- | --- |
-| [`.gitconfig`](.gitconfig) | Sets `core.hooksPath = .githooks/` so the committed hooks are used. |
-| [`.githooks/pre-commit`](.githooks/pre-commit) | Runs the `pre-commit`-stage hooks (formatting, secret detection, etc.) via `.venv`. |
-| [`.githooks/commit-msg`](.githooks/commit-msg) | Runs commitizen via `.venv` to enforce [Conventional Commits](https://www.conventionalcommits.org/) message format. |
-| [`.pre-commit-config.yaml`](.pre-commit-config.yaml) | Declares the hook repos and pinned versions (`rev`). |
-| [`requirements-dev.txt`](requirements-dev.txt) | The pinned tooling installed into `.venv/` — just `pre-commit`. |
-| `.venv/` | The repo-local virtualenv. Created by `make setup`, git-ignored, disposable (`make clean`). |
-
-Each hook's own dependencies are installed by pre-commit into its own cached
-environments (`~/.cache/pre-commit`, or `~/Library/Caches/pre-commit` on macOS),
-not into `.venv/`.
-
-### Hooks included
-
-- **pre-commit-hooks**: trailing whitespace, end-of-file fixer, YAML checks,
-  large-file guard (blocks files over 500 kB by default), case-conflict
-  detection (catches filename collisions on case-insensitive filesystems like
-  macOS/Windows), illegal Windows names, merge-conflict markers, private-key
-  detection, byte-order-marker fix, and mixed line endings.
-- **gitleaks**: scans for hardcoded secrets.
-- **commitizen** (`commit-msg` stage): validates commit messages follow the
-  Conventional Commits format, e.g.:
-  ```
-  feat: add user login
-  fix(api): handle null response
-  chore: bump dependencies
-  ```
-- **sync-pre-commit-deps**: keeps hook dependency versions in sync.
-
-## CI/CD integration
-
-This template is designed so that wiring it into **any** CI/CD platform is
-simple and deterministic. It follows the industry-standard *thin wrapper*
-pattern (see [Martin Fowler on Continuous
-Integration](https://martinfowler.com/articles/continuousIntegration.html#AutomateTheBuild)):
-all the actual check logic lives **in the repository** behind a single command,
-and each CI platform's config does nothing more than check out the code,
-provide a Python interpreter, and run that one command.
-
-```
-make ci                       ← single source of truth (runs locally too)
-  └── .venv/ (built from requirements-dev.txt)
-        └── pre-commit run --all-files
-              └── hooks in .pre-commit-config.yaml
-
-.github/workflows/ci.yml      ← thin stub: checkout → python → `make ci`
-azure-pipelines.yml           ← thin stub: checkout → python → `make ci`
+```bash
+~/.dotfiles/bootstrap.sh   # re-runs the whole chain; idempotent
+~/.dotfiles/install.sh     # just the stage-2 parts (pacaptr, hooks, linking)
 ```
 
-The same `make ci` a developer runs on their laptop is exactly what runs on
-GitHub Actions and Azure DevOps — including building the venv, so the CI stubs
-install nothing themselves. To change *what* CI does, edit the
-[`Makefile`](Makefile) and [`.pre-commit-config.yaml`](.pre-commit-config.yaml)
-— **not** the platform YAML.
+### Environment overrides
 
-| File | Purpose |
-| --- | --- |
-| [`Makefile`](Makefile) (`make ci`) | The portable entrypoint. All check logic lives here. Extend it with your project's build/test commands. |
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Thin GitHub Actions stub that runs `make ci`. |
-| [`azure-pipelines.yml`](azure-pipelines.yml) | Thin Azure DevOps stub that runs `make ci`. |
+| Variable           | Default                                   | Effect                               |
+| ------------------ | ----------------------------------------- | ------------------------------------ |
+| `DOTFILES_REPO`    | `https://github.com/mxwlf/dotfiles`       | Git URL to clone in stage 1          |
+| `DOTFILES_BRANCH`  | `main`                                    | Branch to track                      |
+| `DOTFILES_DIR`     | `$HOME/.dotfiles`                         | Where to clone the repo              |
+| `SKIP_PACKAGES=1`  | off                                       | Stage 2 skips `pacaptr -S`           |
+| `SKIP_HOOKS=1`     | off                                       | Stage 2 skips `hooks/<distro>-post.sh` |
+| `SKIP_LINK=1`      | off                                       | Stage 2 skips dotfile linking        |
 
-### Extending `make ci` for your project
+## Repository layout
 
-Add your build/test steps to the `ci` target in the [`Makefile`](Makefile). For
-example, for a .NET project:
-
-```make
-ci: lint test ## Run the full CI check suite
-
-test: ## Run the test suite
-	dotnet test
+```
+.
+├── bootstrap.sh                  # stage 1, curl-able entrypoint
+├── install.sh                    # stage 2 orchestrator
+├── lib/common.sh                 # OS detection + logging helpers
+├── packages/
+│   ├── common.txt                # installed on every OS (git, curl, wget, jq, ripgrep)
+│   ├── macos.txt                 # extra brew formulae
+│   ├── macos-cask.txt            # brew casks (GUI apps)
+│   ├── linux-debian.txt          # apt-specific overrides
+│   ├── linux-arch.txt            # pacman-specific overrides
+│   └── windows.txt               # reserved for future scoop use
+├── config/pacaptr/pacaptr.toml   # symlinked into $XDG_CONFIG_HOME/pacaptr/
+└── hooks/
+    ├── macos-post.sh
+    ├── debian-post.sh
+    ├── arch-post.sh
+    └── windows-post.sh
 ```
 
-Because the logic is in the Makefile, those steps run identically locally and
-on every CI platform — no YAML changes required.
+## Package list conventions
 
-### What you still configure per platform (and why)
+`pacaptr` doesn't define a "Pkgfile" format — the docs recommend passing
+package names directly to `pacaptr -S`. We split that list into plain text
+files:
 
-The thin-wrapper pattern minimizes platform-specific config but cannot
-eliminate it. Each platform requires its own small YAML stub, and a few
-concerns are inherently platform-specific and **cannot** be pushed into a
-portable script:
+- **`common.txt`** — packages whose name is identical on every backend
+  (e.g. `git`, `curl`, `wget`, `jq`, `ripgrep`).
+- **`<os>.txt`** — per-OS additions and name overrides (e.g. `fd-find` on
+  Debian vs `fd` on brew/pacman).
 
-- **The stub file itself** — GitHub needs `.github/workflows/*.yml`; Azure
-  DevOps needs `azure-pipelines.yml`. The template ships both, pre-wired to
-  `make ci`.
-- **Triggers** (which branches/events run CI) — expressed differently on each
-  platform. Both stubs ship pre-configured to run CI on:
-  - **pushes** to `main` and `develop`, and
-  - **pull requests** targeting `develop`.
+Format: one package per line. `#` starts a comment. Blank lines are ignored.
 
-  Adjust the `on`/`trigger`/`pr` sections in
-  [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and
-  [`azure-pipelines.yml`](azure-pipelines.yml) to change this.
-- **Secrets, service connections, OIDC, and permissions** — managed in each
-  platform's settings/YAML, never in the repo.
-- **Runner/agent image** and **which Python interpreter is on the agent** (the
-  base for `.venv`).
+Stage 2 builds the final list with:
 
-Everything else — the actual checks — is shared via `make ci`.
+```
+cat packages/common.txt packages/<distro>.txt | strip comments/blanks | sort -u
+```
 
-### Determinism
+and feeds it to a single `pacaptr -S --noconfirm …` call. On macOS, a
+second pass installs `macos-cask.txt` with `-- --cask` appended so brew
+treats them as casks.
 
-- `pre-commit` is pinned in [`requirements-dev.txt`](requirements-dev.txt) and
-  installed into an isolated `.venv/`, so CI and laptops run the same version
-  regardless of what is installed globally.
-- Hook versions are pinned via `rev` in
-  [`.pre-commit-config.yaml`](.pre-commit-config.yaml).
-- Both CI stubs pin the interpreter used to build `.venv` (currently 3.14) for
-  reproducible runs. Any `>= 3.10` works; the pin is not a hook requirement.
-- Both stubs cache pre-commit hook environments keyed on the config file, so
-  unchanged hooks are not rebuilt.
+## pacaptr.toml
 
-Bump these versions deliberately when you want to upgrade.
+Only one knob is set: `needed = true`. That makes `pacaptr -S` a no-op
+for already-installed packages, so re-running `install.sh` is cheap and
+safe.
 
-## Make targets
+System upgrades (`pacaptr -Syu`) are **not** performed automatically.
+Run them manually when you want them:
 
-| Target | Description |
-| --- | --- |
-| `make help` | Show available targets (default when running `make`). |
-| `make setup` | Create `.venv`, then configure the repo to use the shared git config and pre-commit hooks. |
-| `make venv` | Create/update `.venv` from `requirements-dev.txt` (no-op when up to date). |
-| `make ci` | Run the full CI check suite — the single command CI/CD pipelines invoke. Runs identically locally. |
-| `make lint` | Run all pre-commit hooks against all files. |
-| `make clean` | Remove `.venv` (rebuild with `make setup`). |
-| `make check-python` | Verify the interpreter used to build `.venv` is `>= 3.10`. |
+```bash
+pacaptr -Syu
+```
 
-Override the interpreter for any of these with `PYTHON=...`, e.g.
-`make setup PYTHON=python3.12`.
+## Dotfile linking
 
-## Troubleshooting
+Deferred — `install.sh` has a `link_dotfiles()` stub that's currently a
+no-op. Decide between `stow`, a hand-rolled `ln -s` loop, or `chezmoi`,
+then fill it in.
 
-- **`` `pre-commit` was not found in this repository's .venv/ ``** — the venv is
-  missing (fresh clone, new worktree, or `make clean`). Run `make setup` from
-  the repository root.
-- **`Error: python3 ... but >= 3.10 is required`** — the interpreter make would
-  use to build `.venv` is too old. Install any newer Python and either put it on
-  your `PATH` as `python3` or pass it explicitly: `make setup PYTHON=python3.12`.
-  You do **not** need to change your system default.
-- **commitizen / sync-pre-commit-deps fails to build / `requires a different Python`** —
-  the hooks are being run by a pre-commit *outside* `.venv/` (a global install
-  under an old interpreter). Confirm `make setup` has been run and that
-  `git config --get core.hooksPath` prints `.githooks/`; if a stray
-  `pre-commit install` overwrote `.git/hooks/`, delete those generated files so
-  `core.hooksPath` takes effect again. See
-  [Requirements](#requirements) for why the interpreter is chosen this way.
-- **`.venv` broke after a Python upgrade** (e.g. Homebrew replaced the
-  interpreter it was built from) — recreate it: `make clean && make setup`.
-- **Hook is ignored / not running** — confirm `make setup` has been run
-  (`git config --get include.path` should print `../.gitconfig`) and that the
-  hook scripts in `.githooks/` are executable.
+## License
+
+MIT.
